@@ -1,0 +1,49 @@
+﻿# Ambientes virtuais
+.venv/
+venv/
+ENV/
+env/
+
+# Caches e arquivos compilados do Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# Artefatos locais de primeira execução
+.first_run_complete
+
+# Configurações de IDE/editor
+.vscode/
+.idea/
+*.code-workspace
+
+# Metadados de build e pacotes
+*.egg-info/
+*.eggs/
+.dist/
+build/
+dist/
+
+# Logs e arquivos temporários
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Modelos grandes do Real-ESRGAN (mantém apenas os scripts .py)
+models_realesrgan/*.pth
+
+# Saídas geradas pelo aplicativo (ajuste conforme seu fluxo)
+assets/*_sr.*
+assets/*_x2.*
+assets/*_x3.*
+assets/*_x4.*
+assets/*_x8.*
+
+# Sistemas operacionais
+.DS_Store
+Thumbs.db
+desktop.ini

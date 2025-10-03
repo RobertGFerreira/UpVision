@@ -1,0 +1,569 @@
+"""UpVision – Aplicativo desktop para realizar upscale de imagens com Real-ESRGAN.
+
+Recursos principais:
+- Seleção múltipla de arquivos de imagem.
+- Escolha de diretório de saída.
+- Seleção de checkpoint (``models_realesrgan/*.pth``) e do dispositivo (CPU/GPU).
+- Execução em thread separada com logs ao vivo e barra de progresso.
+
+Como executar:
+
+```
+python main.py
+```
+"""
+
+from __future__ import annotations
+
+import queue
+import threading
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+import tkinter as tk
+
+from PIL import Image, ImageTk
+
+from engine import BatchResult, UpscaleEngine
+
+APP_TITLE = "UpVision"
+APP_SUBTITLE = "Real-ESRGAN Upscale"
+PADDING = 16
+
+
+class UpscaleApp:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.root.title(APP_TITLE)
+        self.root.geometry("900x650")
+        self.root.minsize(820, 600)
+
+        self.engine = UpscaleEngine()
+        self.device_summary = self.engine.get_device_summary()
+        self.models = self.engine.list_models()
+        self.default_assets_dir = (self.engine.app_dir / "assets") if hasattr(self.engine, "app_dir") else None
+
+        self.event_queue: "queue.Queue[tuple[str, object]]" = queue.Queue()
+        self.selected_files: list[Path] = []
+        self.output_dir: Path | None = None
+        self.processing = False
+        self.current_total = 0
+        self._first_run_sentinel = self.engine.app_dir / ".first_run_complete"
+        self._first_run_active = False
+        self._first_run_test_image: Path | None = None
+        self._first_run_expected_outputs: list[Path] = []
+        self._test_alert_window: tk.Toplevel | None = None
+        self.logo_path = self.engine.app_dir / "assets" / "upvision_logo.png"
+        self.logo_image: tk.PhotoImage | None = None
+        self.header_title_var = tk.StringVar(value=APP_TITLE)
+        self.header_subtitle_var = tk.StringVar(value=APP_SUBTITLE)
+
+        self._build_ui()
+        self._load_brand_assets()
+        self._populate_models()
+        self._populate_devices()
+        self._update_status_line()
+        self._start_queue_poller()
+        self._maybe_schedule_first_run()
+
+    # ------------------------------------------------------------------
+    # UI construction
+
+    def _build_ui(self) -> None:
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+
+        main_frame = ttk.Frame(self.root, padding=PADDING)
+        main_frame.grid(row=0, column=0, sticky="nsew")
+        for col in range(3):
+            main_frame.columnconfigure(col, weight=1)
+        main_frame.rowconfigure(5, weight=1)
+        main_frame.rowconfigure(6, weight=2)
+
+        # Cabeçalho ------------------------------------------------------
+        header_frame = ttk.Frame(main_frame)
+        header_frame.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 16))
+        header_frame.columnconfigure(1, weight=1)
+        header_frame.columnconfigure(2, weight=1)
+
+        self.header_image_label = ttk.Label(header_frame)
+        self.header_image_label.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 12))
+
+        self.header_title_label = ttk.Label(
+            header_frame,
+            textvariable=self.header_title_var,
+            font=("Segoe UI", 20, "bold"),
+            anchor="center",
+        )
+        self.header_title_label.grid(row=0, column=1, columnspan=2, sticky="ew")
+
+        self.header_subtitle_label = ttk.Label(
+            header_frame,
+            textvariable=self.header_subtitle_var,
+            font=("Segoe UI", 11),
+            anchor="center",
+        )
+        self.header_subtitle_label.grid(row=1, column=1, columnspan=2, sticky="ew")
+
+        # Arquivos -------------------------------------------------------
+        file_frame = ttk.LabelFrame(main_frame, text="Arquivos de entrada")
+        file_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", padx=(0, 0), pady=(0, 12))
+        file_frame.columnconfigure(0, weight=1)
+
+        btn_select = ttk.Button(file_frame, text="Adicionar imagens…", command=self._on_select_files)
+        btn_select.grid(row=0, column=0, sticky="w", padx=8, pady=8)
+
+        btn_clear = ttk.Button(file_frame, text="Limpar lista", command=self._on_clear_files)
+        btn_clear.grid(row=0, column=1, sticky="w", padx=8, pady=8)
+
+        self.files_list = tk.Listbox(file_frame, height=6, selectmode=tk.SINGLE)
+        self.files_list.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
+        file_frame.rowconfigure(1, weight=1)
+
+        self.files_summary = tk.StringVar(value="Nenhuma imagem selecionada.")
+        ttk.Label(file_frame, textvariable=self.files_summary).grid(row=2, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
+
+        # Destino --------------------------------------------------------
+        dest_frame = ttk.LabelFrame(main_frame, text="Destino")
+        dest_frame.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        dest_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(dest_frame, text="Pasta de saída:").grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        self.dest_var = tk.StringVar(value="Nenhuma" )
+        dest_entry = ttk.Entry(dest_frame, textvariable=self.dest_var, state="readonly")
+        dest_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
+
+        ttk.Button(dest_frame, text="Escolher…", command=self._on_select_output_dir).grid(row=0, column=2, padx=8, pady=8)
+
+        # Opções ---------------------------------------------------------
+        options_frame = ttk.LabelFrame(main_frame, text="Opções")
+        options_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        for col in range(4):
+            options_frame.columnconfigure(col, weight=1)
+
+        ttk.Label(options_frame, text="Checkpoint:").grid(row=0, column=0, sticky="w", padx=8, pady=8)
+        self.model_var = tk.StringVar()
+        self.model_combo = ttk.Combobox(options_frame, textvariable=self.model_var, state="readonly")
+        self.model_combo.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
+
+        ttk.Label(options_frame, text="Dispositivo:").grid(row=0, column=2, sticky="w", padx=8, pady=8)
+        self.device_var = tk.StringVar()
+        self.device_combo = ttk.Combobox(options_frame, textvariable=self.device_var, state="readonly")
+        self.device_combo.grid(row=0, column=3, sticky="ew", padx=(0, 8), pady=8)
+
+        # Ações ----------------------------------------------------------
+        actions_frame = ttk.Frame(main_frame)
+        actions_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        actions_frame.columnconfigure(0, weight=1)
+
+        self.btn_start = ttk.Button(actions_frame, text="Iniciar upscale", command=self._on_start)
+        self.btn_start.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+        self.btn_stop = ttk.Button(actions_frame, text="Cancelar", command=self._on_cancel, state="disabled")
+        self.btn_stop.grid(row=0, column=1, sticky="e")
+
+        # Progresso ------------------------------------------------------
+        progress_frame = ttk.LabelFrame(main_frame, text="Progresso")
+        progress_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=(0, 12))
+        progress_frame.columnconfigure(0, weight=1)
+
+        self.progress_var = tk.DoubleVar(value=0.0)
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100.0)
+        self.progress_bar.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+
+        self.progress_label = tk.StringVar(value="Aguardando…")
+        ttk.Label(progress_frame, textvariable=self.progress_label).grid(row=1, column=0, sticky="w", padx=8, pady=(0, 8))
+
+        # Logs -----------------------------------------------------------
+        log_frame = ttk.LabelFrame(main_frame, text="Logs")
+        log_frame.grid(row=6, column=0, columnspan=3, sticky="nsew")
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+
+        self.log_text = tk.Text(log_frame, wrap="word", height=12, state="disabled")
+        self.log_text.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+
+        log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        log_scroll.grid(row=0, column=1, sticky="ns", pady=8)
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+
+        # Status ---------------------------------------------------------
+        status_frame = ttk.Frame(self.root)
+        status_frame.grid(row=1, column=0, sticky="ew")
+        status_frame.columnconfigure(0, weight=1)
+        self.status_var = tk.StringVar()
+        ttk.Label(status_frame, textvariable=self.status_var, anchor="w").grid(row=0, column=0, sticky="ew", padx=PADDING, pady=(0, 4))
+
+    # ------------------------------------------------------------------
+    # UI helpers
+
+    def _populate_models(self) -> None:
+        names = [model.name for model in self.models]
+        self.model_combo["values"] = names
+        if names:
+            self.model_combo.configure(state="readonly")
+            self.model_combo.current(0)
+        else:
+            self.model_var.set("Nenhum modelo encontrado")
+            self.model_combo.configure(state="disabled")
+        self._update_start_button()
+
+    def _populate_devices(self) -> None:
+        items = []
+        default = "cpu"
+        if self.device_summary.torch_available:
+            items.append("cpu")
+            if self.device_summary.cuda_available:
+                items.append("cuda")
+                default = "cuda"
+        else:
+            items.append("torch ausente")
+            self.device_combo.configure(state="disabled")
+        self.device_combo["values"] = items
+        self.device_combo.set(default)
+        self._update_start_button()
+
+    def _update_status_line(self) -> None:
+        summary = self.device_summary
+        if not summary.torch_available:
+            self.status_var.set("Torch não instalado. Instale torch/torchvision/torchaudio para continuar.")
+            return
+        cuda_text = "Sim" if summary.cuda_available else "Não"
+        gpu_name = summary.cuda_device_name or "—"
+        model_path = str(self.engine.models_dir)
+        self.status_var.set(
+            f"Torch {summary.torch_version} | CUDA compilado: {summary.torch_cuda_compiled or '—'} | CUDA disponível: {cuda_text} | GPU: {gpu_name} | Modelos: {model_path}"
+        )
+
+    def _append_log(self, message: str) -> None:
+        print(message, flush=True)
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", message + "\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def _load_brand_assets(self) -> None:
+        if not self.logo_path.exists():
+            self._append_log(
+                f"[AVISO] Logo do UpVision não encontrada em {self.logo_path}."
+            )
+            return
+        try:
+            pil_image = Image.open(self.logo_path)
+        except Exception as exc:  # pragma: no cover - depende do sistema de arquivos
+            self._append_log(f"[ERRO] Falha ao abrir a logo do UpVision: {exc}")
+            return
+
+        max_size = (120, 120)
+        try:
+            resample = Image.Resampling.LANCZOS  # type: ignore[attr-defined]
+        except AttributeError:  # Pillow < 9.1
+            resample = Image.LANCZOS
+        pil_image.thumbnail(max_size, resample=resample)
+
+        try:
+            image = ImageTk.PhotoImage(pil_image)
+        except Exception as exc:  # pragma: no cover - depende do backend Tk
+            self._append_log(f"[ERRO] Falha ao converter a logo do UpVision: {exc}")
+            return
+
+        self.logo_image = image
+        self.header_image_label.configure(image=self.logo_image)
+        self.header_image_label.image = self.logo_image  # evitar GC
+        try:
+            self.root.iconphoto(False, self.logo_image)
+        except tk.TclError:  # pragma: no cover - algumas plataformas não suportam
+            pass
+
+    def _show_test_alert(self) -> None:
+        self._close_test_alert()
+        window = tk.Toplevel(self.root)
+        window.title("Auto-teste inicial")
+        window.resizable(False, False)
+        window.transient(self.root)
+        window.attributes("-topmost", True)
+        window.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        padding = ttk.Frame(window, padding=20)
+        padding.grid(sticky="nsew")
+
+        ttk.Label(
+            padding,
+            text=(
+                "Executando auto-teste inicial...\n"
+                "• Validando importações e dependências\n"
+                "• Conferindo dispositivos disponíveis\n"
+                "• Processando imagem de exemplo"
+            ),
+            justify="left",
+        ).grid(row=0, column=0, sticky="w")
+
+        progress = ttk.Progressbar(padding, mode="indeterminate")
+        progress.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        padding.columnconfigure(0, weight=1)
+        progress.start(10)
+
+        self._test_alert_window = window
+
+    def _close_test_alert(self) -> None:
+        if self._test_alert_window is not None:
+            try:
+                self._test_alert_window.destroy()
+            except tk.TclError:
+                pass
+            finally:
+                self._test_alert_window = None
+
+    def _schedule_auto_shutdown(self, success: bool) -> None:
+        if success:
+            self._append_log(
+                "Auto-teste finalizado. O aplicativo será fechado e poderá ser reaberto para uso normal."
+            )
+        else:
+            self._append_log(
+                "Auto-teste não foi concluído com sucesso. O aplicativo será fechado; ajuste o ambiente antes de abrir novamente."
+            )
+        self.root.after(1500, self.root.destroy)
+
+    def _set_processing_state(self, processing: bool) -> None:
+        self.processing = processing
+        for widget in (self.model_combo, self.device_combo, self.files_list):
+            widget.configure(state="disabled" if processing else "normal")
+        self._update_start_button()
+        self.btn_stop.configure(state="normal" if processing else "disabled")
+
+    def _update_start_button(self) -> None:
+        if self.processing:
+            self.btn_start.configure(state="disabled")
+            return
+        if not self.models or not self.device_summary.torch_available:
+            self.btn_start.configure(state="disabled")
+        else:
+            self.btn_start.configure(state="normal")
+
+    # ------------------------------------------------------------------
+    # Event handlers
+
+    def _on_select_files(self) -> None:
+        filetypes = [
+            ("Imagens", "*.png;*.jpg;*.jpeg;*.bmp;*.tiff;*.webp"),
+            ("Todos os arquivos", "*.*"),
+        ]
+        dialog_kwargs = {"title": "Selecione imagens", "filetypes": filetypes}
+        if self.default_assets_dir and self.default_assets_dir.exists():
+            dialog_kwargs["initialdir"] = str(self.default_assets_dir)
+        filenames = filedialog.askopenfilenames(**dialog_kwargs)
+        if not filenames:
+            return
+        for name in filenames:
+            path = Path(name)
+            if path not in self.selected_files:
+                self.selected_files.append(path)
+                self.files_list.insert("end", path.name)
+        self.files_summary.set(f"{len(self.selected_files)} arquivo(s) selecionado(s).")
+
+    def _on_clear_files(self) -> None:
+        self.selected_files.clear()
+        self.files_list.delete(0, "end")
+        self.files_summary.set("Nenhuma imagem selecionada.")
+
+    def _on_select_output_dir(self) -> None:
+        dialog_kwargs = {"title": "Escolha a pasta de destino"}
+        if self.default_assets_dir and self.default_assets_dir.exists():
+            dialog_kwargs["initialdir"] = str(self.default_assets_dir)
+        directory = filedialog.askdirectory(**dialog_kwargs)
+        if directory:
+            self.output_dir = Path(directory)
+            self.dest_var.set(directory)
+
+    def _on_start(self) -> None:
+        if not self.selected_files:
+            messagebox.showwarning(APP_TITLE, "Selecione pelo menos uma imagem.")
+            return
+        if self.output_dir is None:
+            messagebox.showwarning(APP_TITLE, "Escolha a pasta de destino.")
+            return
+        if self.model_var.get() not in {model.name for model in self.models}:
+            messagebox.showwarning(APP_TITLE, "Escolha um checkpoint válido.")
+            return
+        device_choice = self.device_var.get().lower()
+        if device_choice.startswith("cuda") and not self.device_summary.cuda_available:
+            messagebox.showerror(APP_TITLE, "CUDA não está disponível neste ambiente.")
+            return
+
+        self._append_log("Iniciando processamento…")
+        self.progress_var.set(0.0)
+        self.progress_label.set("0 / {0}".format(len(self.selected_files)))
+        self.current_total = len(self.selected_files)
+        self._set_processing_state(True)
+
+        thread = threading.Thread(
+            target=self._worker,
+            args=(
+                list(self.selected_files),
+                self.output_dir,
+                self.model_var.get(),
+                device_choice,
+            ),
+            daemon=True,
+        )
+        thread.start()
+
+    def _on_cancel(self) -> None:
+        messagebox.showinfo(
+            "Cancelar", "O cancelamento imediato não está disponível. Aguarde a conclusão da imagem atual."
+        )
+
+    # ------------------------------------------------------------------
+    # Background worker & queue polling
+
+    def _worker(self, images: list[Path], output_dir: Path, model_name: str, device: str) -> None:
+        try:
+            self.engine.process_batch(images, output_dir, model_name, device, self.event_queue)
+        except Exception as exc:
+            self.event_queue.put(("error", str(exc)))
+            self.event_queue.put(("done", None))
+
+    def _start_queue_poller(self) -> None:
+        self.root.after(100, self._poll_queue)
+
+    def _poll_queue(self) -> None:
+        try:
+            while True:
+                event, payload = self.event_queue.get_nowait()
+                if event == "log":
+                    self._append_log(str(payload))
+                elif event == "progress":
+                    current, total = payload  # type: ignore[misc]
+                    self.progress_var.set((current / total) * 100.0 if total else 0.0)
+                    self.progress_label.set(f"{current} / {total}")
+                elif event == "done":
+                    self._finalise_run(payload)
+                elif event == "error":
+                    error_text = str(payload)
+                    self._append_log(f"[ERRO] {error_text}")
+                    if not self._first_run_active:
+                        messagebox.showerror(APP_TITLE, error_text)
+        except queue.Empty:
+            pass
+        finally:
+            self.root.after(100, self._poll_queue)
+
+    def _finalise_run(self, payload: object) -> None:
+        self._set_processing_state(False)
+        first_run_active = self._first_run_active
+        if first_run_active:
+            self._close_test_alert()
+        first_run_success = False
+        show_dialogs = not first_run_active
+        if isinstance(payload, BatchResult):
+            summary = (
+                f"Processadas: {payload.succeeded}/{payload.total} | Falhas: {payload.failed} | Tempo: {payload.duration:.2f}s"
+            )
+            self._append_log(summary)
+            if show_dialogs:
+                messagebox.showinfo(APP_TITLE, summary)
+            first_run_success = payload.succeeded > 0 and payload.failed == 0
+        else:
+            self._append_log("Execução encerrada.")
+            first_run_success = False
+        if first_run_active:
+            try:
+                if first_run_success:
+                    self._first_run_sentinel.touch(exist_ok=True)
+                    removed_files: list[str] = []
+                    for output_path in list(self._first_run_expected_outputs):
+                        try:
+                            if output_path.exists():
+                                output_path.unlink()
+                                removed_files.append(output_path.name)
+                        except Exception as err:  # pragma: no cover - best effort cleanup
+                            self._append_log(f"[ERRO] Não foi possível remover {output_path.name}: {err}")
+                    if removed_files:
+                        self._append_log(
+                            "Imagens de teste removidas: " + ", ".join(removed_files)
+                        )
+                    self._append_log("Teste automático concluído com sucesso. Aplicativo pronto para uso.")
+                    self._on_clear_files()
+                    self.output_dir = None
+                    self.dest_var.set("Nenhuma")
+                else:
+                    self._append_log(
+                        "Teste automático falhou; ajuste o ambiente e reinicie o aplicativo para tentar novamente."
+                    )
+            finally:
+                self._first_run_expected_outputs.clear()
+                self._first_run_test_image = None
+                self._first_run_active = False
+                self._schedule_auto_shutdown(first_run_success)
+
+    def _maybe_schedule_first_run(self) -> None:
+        if self._first_run_sentinel.exists():
+            return
+        assets_dir = self.default_assets_dir or (self.engine.app_dir / "assets")
+        test_image = assets_dir / "teste_realesrgan.jpg"
+        if not test_image.exists():
+            return
+        if not self.models:
+            self._append_log(
+                "Primeira inicialização automática ignorada: nenhum modelo Real-ESRGAN encontrado."
+            )
+            return
+
+        def trigger() -> None:
+            if self._first_run_sentinel.exists():
+                return
+            if not test_image.exists():
+                self._append_log(
+                    "Teste automático não executado: arquivo teste_realesrgan.jpg ausente."
+                )
+                return
+            self._first_run_test_image = test_image
+            self.selected_files = [test_image]
+            self.files_list.delete(0, "end")
+            self.files_list.insert("end", test_image.name)
+            self.files_summary.set("1 arquivo(s) selecionado(s).")
+
+            destination = assets_dir if assets_dir.exists() else test_image.parent
+            self.output_dir = destination
+            self.dest_var.set(str(destination))
+
+            if self.model_combo["state"] == "readonly" and self.model_combo["values"]:
+                self.model_combo.current(0)
+            model_index = self.model_combo.current()
+            if model_index < 0 and self.models:
+                model_index = 0
+            if not self.device_var.get() and self.device_combo["values"]:
+                self.device_combo.current(0)
+
+            expected_outputs: list[Path] = []
+            if 0 <= model_index < len(self.models):
+                model_info = self.models[model_index]
+                expected_outputs.append(
+                    destination / f"{test_image.stem}_x{model_info.scale}{test_image.suffix}"
+                )
+            self._first_run_expected_outputs = expected_outputs
+
+            self._append_log(
+                "Auto-teste inicial: validando importações, recursos e processando a imagem teste_realesrgan.jpg."
+            )
+            self._show_test_alert()
+            self._first_run_active = True
+            self.root.after(200, self._on_start)
+
+        self.root.after(500, trigger)
+
+    # ------------------------------------------------------------------
+    # Public entry point
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
+def main() -> None:
+    root = tk.Tk()
+    app = UpscaleApp(root)
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
