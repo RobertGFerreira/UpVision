@@ -153,6 +153,7 @@ class UpscaleEngine:
 
         total = len(paths)
         for index, source in enumerate(paths, start=1):
+            event_queue.put(("log", f"Processando: {source.name}"))
             try:
                 dest = lazy_model.enhance_image(source, output_dir)
             except Exception as err:  # pragma: no cover - runtime errors only
@@ -162,7 +163,7 @@ class UpscaleEngine:
                 succeeded += 1
                 event_queue.put(("log", f"[OK] {source.name} → {dest.name}"))
             finally:
-                event_queue.put(("progress", (index, total)))
+                event_queue.put(("progress", (index, total, source.name)))
 
         duration = time.time() - start
         event_queue.put(("done", BatchResult(total, succeeded, failed, duration)))

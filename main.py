@@ -13,8 +13,7 @@ python main.py
 ```
 """
 
-from __future__ import annotations
-
+import os
 import queue
 import threading
 from pathlib import Path
@@ -34,7 +33,7 @@ class UpscaleApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("900x650")
+        self.root.geometry("900x750")
         self.root.minsize(820, 600)
 
         self.engine = UpscaleEngine()
@@ -112,8 +111,11 @@ class UpscaleApp:
         btn_select = ttk.Button(file_frame, text="Adicionar imagens…", command=self._on_select_files)
         btn_select.grid(row=0, column=0, sticky="w", padx=8, pady=8)
 
+        btn_select_folder = ttk.Button(file_frame, text="Adicionar pasta…", command=self._on_select_folder)
+        btn_select_folder.grid(row=0, column=1, sticky="w", padx=8, pady=8)
+
         btn_clear = ttk.Button(file_frame, text="Limpar lista", command=self._on_clear_files)
-        btn_clear.grid(row=0, column=1, sticky="w", padx=8, pady=8)
+        btn_clear.grid(row=0, column=2, sticky="w", padx=8, pady=8)
 
         self.files_list = tk.Listbox(file_frame, height=6, selectmode=tk.SINGLE)
         self.files_list.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 8))
@@ -144,6 +146,7 @@ class UpscaleApp:
         self.model_var = tk.StringVar()
         self.model_combo = ttk.Combobox(options_frame, textvariable=self.model_var, state="readonly")
         self.model_combo.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
+        self.model_combo.bind("<<ComboboxSelected>>", lambda e: self._update_status_line())
 
         ttk.Label(options_frame, text="Dispositivo:").grid(row=0, column=2, sticky="w", padx=8, pady=8)
         self.device_var = tk.StringVar()
@@ -160,6 +163,9 @@ class UpscaleApp:
 
         self.btn_stop = ttk.Button(actions_frame, text="Cancelar", command=self._on_cancel, state="disabled")
         self.btn_stop.grid(row=0, column=1, sticky="e")
+
+        self.btn_view_results = ttk.Button(actions_frame, text="Visualizar resultados", command=self._on_view_results)
+        self.btn_view_results.grid(row=0, column=2, sticky="e", padx=(8, 0))
 
         # Progresso ------------------------------------------------------
         progress_frame = ttk.LabelFrame(main_frame, text="Progresso")
@@ -179,7 +185,7 @@ class UpscaleApp:
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
-        self.log_text = tk.Text(log_frame, wrap="word", height=12, state="disabled")
+        self.log_text = tk.Text(log_frame, wrap="word", height=20, state="disabled")
         self.log_text.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
         log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
@@ -230,8 +236,23 @@ class UpscaleApp:
         cuda_text = "Sim" if summary.cuda_available else "Não"
         gpu_name = summary.cuda_device_name or "—"
         model_path = str(self.engine.models_dir)
+
+        selected_model = self.model_var.get()
+        if selected_model:
+            model_info = next((m for m in self.models if m.name == selected_model), None)
+            if model_info:
+                try:
+                    model_rel_path = model_info.path.relative_to(self.engine.app_dir)
+                    model_text = str(model_rel_path)
+                except ValueError:
+                    model_text = str(model_info.path)
+            else:
+                model_text = "Modelo não encontrado"
+        else:
+            model_text = "Nenhum modelo selecionado"
+
         self.status_var.set(
-            f"Torch {summary.torch_version} | CUDA compilado: {summary.torch_cuda_compiled or '—'} | CUDA disponível: {cuda_text} | GPU: {gpu_name} | Modelos: {model_path}"
+            f"Torch {summary.torch_version} | CUDA compilado: {summary.torch_cuda_compiled or '—'} | CUDA disponível: {cuda_text} | GPU: {gpu_name} | Modelo: {model_text}"
         )
 
     def _append_log(self, message: str) -> None:
@@ -366,6 +387,24 @@ class UpscaleApp:
         self.files_list.delete(0, "end")
         self.files_summary.set("Nenhuma imagem selecionada.")
 
+    def _on_select_folder(self) -> None:
+        dialog_kwargs = {"title": "Escolha a pasta com imagens"}
+        if self.default_assets_dir and self.default_assets_dir.exists():
+            dialog_kwargs["initialdir"] = str(self.default_assets_dir)
+        folder = filedialog.askdirectory(**dialog_kwargs)
+        if not folder:
+            return
+        folder_path = Path(folder)
+        exts = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
+        new_files = []
+        for path in folder_path.rglob("*"):
+            if path.is_file() and path.suffix.lower() in exts and path not in self.selected_files:
+                new_files.append(path)
+        self.selected_files.extend(new_files)
+        for path in new_files:
+            self.files_list.insert("end", path.name)
+        self.files_summary.set(f"{len(self.selected_files)} arquivo(s) selecionado(s).")
+
     def _on_select_output_dir(self) -> None:
         dialog_kwargs = {"title": "Escolha a pasta de destino"}
         if self.default_assets_dir and self.default_assets_dir.exists():
@@ -413,6 +452,12 @@ class UpscaleApp:
             "Cancelar", "O cancelamento imediato não está disponível. Aguarde a conclusão da imagem atual."
         )
 
+    def _on_view_results(self) -> None:
+        if self.output_dir and self.output_dir.exists():
+            os.startfile(str(self.output_dir))
+        else:
+            messagebox.showwarning(APP_TITLE, "Nenhuma pasta de destino definida ou não existe.")
+
     # ------------------------------------------------------------------
     # Background worker & queue polling
 
@@ -433,9 +478,9 @@ class UpscaleApp:
                 if event == "log":
                     self._append_log(str(payload))
                 elif event == "progress":
-                    current, total = payload  # type: ignore[misc]
+                    current, total, filename = payload  # type: ignore[misc]
                     self.progress_var.set((current / total) * 100.0 if total else 0.0)
-                    self.progress_label.set(f"{current} / {total}")
+                    self.progress_label.set(f"Processando: {filename} ({current} / {total})")
                 elif event == "done":
                     self._finalise_run(payload)
                 elif event == "error":
@@ -450,6 +495,8 @@ class UpscaleApp:
 
     def _finalise_run(self, payload: object) -> None:
         self._set_processing_state(False)
+        if not self._first_run_active:
+            self.progress_label.set("Concluído")
         first_run_active = self._first_run_active
         if first_run_active:
             self._close_test_alert()

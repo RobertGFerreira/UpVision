@@ -5,13 +5,25 @@ UpVision é uma aplicação desktop simples (Tkinter) para realizar upscale de i
 ## Recursos
 
 - Seleção múltipla de arquivos de imagem (PNG, JPG, TIFF, WebP etc.).
+- Seleção de pastas inteiras para processar todas as imagens recursivamente.
 - Escolha da pasta de destino para salvar os resultados.
 - Seleção do checkpoint `.pth` localizado em `models_realesrgan/`.
 - Definição se o processamento deve ocorrer em CPU ou GPU (CUDA), quando disponível.
-- Execução em thread separada com barra de progresso e log em tempo real.
+- Execução em thread separada com barra de progresso e log em tempo real, mostrando o arquivo atual.
+- Botão para visualizar resultados diretamente no Explorador de Arquivos.
 - Scripts auxiliares para diagnóstico do ambiente e patch do `basicsr`.
+- Status no rodapé mostrando informações do sistema e caminho do modelo selecionado.
 
 ## Guia completo: do download ao primeiro uso
+
+Para facilitar, use os scripts automáticos:
+
+- **Windows**: Clique duas vezes em `run.bat` ou execute no PowerShell: `.\run.bat`
+- **Linux/Mac**: Execute no terminal: `chmod +x run.sh && ./run.sh`
+
+Estes scripts criam o ambiente virtual, instalam dependências e executam um teste automático.
+
+Ou siga os passos manuais abaixo.
 
 1. **Instalar o Python 3.10 (64 bits)**
 
