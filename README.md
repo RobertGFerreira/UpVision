@@ -16,19 +16,19 @@ UpVision é uma aplicação desktop simples (Tkinter) para realizar upscale de i
 
 ## Guia completo: do download ao primeiro uso
 
-Para facilitar, use os scripts automáticos:
+Para facilitar, use os scripts automáticos que fazem tudo automaticamente:
 
 - **Windows**: Clique duas vezes em `run.bat` ou execute no PowerShell: `.\run.bat`
 - **Linux/Mac**: Execute no terminal: `chmod +x run.sh && ./run.sh`
 
-Estes scripts criam o ambiente virtual, instalam dependências e executam um teste automático.
+Estes scripts criam o ambiente virtual `.venv310`, instalam PyTorch latest (2.8.0+), basicsr corrigido para Python 3.13+, dependências, aplicam patches, baixam modelos e executam um teste automático.
 
 Ou siga os passos manuais abaixo.
 
-1. **Instalar o Python 3.10 (64 bits)**
+1. **Instalar o Python 3.13+ (64 bits)**
 
-    - Acesse <https://www.python.org/downloads/release/python-31010/>.
-    - Baixe o instalador Windows x64 (Executável).
+    - Acesse <https://www.python.org/downloads/>.
+    - Baixe o instalador mais recente (3.13.x) para Windows x64.
     - Ao executar, marque a opção **Add Python to PATH** antes de clicar em *Install Now*.
 
 1. **Verificar a instalação**
@@ -37,7 +37,7 @@ Ou siga os passos manuais abaixo.
     python --version
     ```
 
-    O comando deve retornar algo como `Python 3.10.x`.
+    O comando deve retornar algo como `Python 3.13.x`.
 
 1. **Preparar a pasta do aplicativo**
 
@@ -62,8 +62,8 @@ Ou siga os passos manuais abaixo.
 1. **Criar e ativar um ambiente virtual**
 
     ```powershell
-    python -m venv .venv
-    .\.venv\Scripts\Activate.ps1
+    python -m venv .venv310
+    .\.venv310\Scripts\Activate.ps1
     ```
 
 1. **Atualizar ferramentas básicas do pip**
@@ -74,17 +74,19 @@ Ou siga os passos manuais abaixo.
 
 1. **Instalar PyTorch conforme o hardware**
 
-    - GPU (CUDA 12.1):
+    - GPU (CUDA):
 
         ```powershell
-        pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
         ```
 
     - CPU apenas:
 
         ```powershell
-        pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         ```
+
+    > Nota: Os scripts automáticos instalam a versão mais recente (2.8.0+) compatível com seu sistema.
 
 1. **Instalar as demais dependências do projeto**
 
@@ -130,28 +132,36 @@ Os modelos `.pth` podem estar em `models_realesrgan/` (dentro da própria pasta 
 
 ## Instalação
 
-1. Crie e ative um ambiente virtual (recomendado Python 3.10).
+1. Crie e ative um ambiente virtual (recomendado Python 3.13+).
 2. Atualize as ferramentas básicas: `python -m pip install --upgrade pip setuptools wheel`.
 3. Instale PyTorch de acordo com o hardware:
-   - **GPU (CUDA 12.1)**:
+   - **GPU (CUDA)**:
 
      ```powershell
-     pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
      ```
 
    - **CPU apenas**:
 
      ```powershell
-     pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
+     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
      ```
 
-4. Instale as demais dependências:
+4. Instale basicsr (corrigido para Python 3.13+):
+
+   ```powershell
+   pip install git+https://github.com/xinntao/BasicSR.git
+   ```
+
+5. Instale as demais dependências:
 
    ```powershell
    pip install -r requirements.txt
    ```
 
-5. (Opcional) Rode os utilitários em `tools/` para validar o ambiente.
+6. (Opcional) Rode os utilitários em `tools/` para validar o ambiente.
+
+> Nota: Os scripts `run.bat` e `run.sh` automatizam todos estes passos, incluindo a instalação corrigida do basicsr.
 
 ### Modo standalone
 
@@ -183,7 +193,7 @@ O programa criará os arquivos com sufixo `_x2`, `_x4`, etc., conforme o fator d
 - `env_check.py`: imprime versões de Python, torch, torchvision, torchaudio, realesrgan e basicsr.
 - `diagnostico_realesrgan.py`: realiza um upscale de teste usando o modelo `RealESRGAN_x2plus.pth` e salva `teste_realesrgan_sr.jpg`.
 - `patch_basicsr_torchvision.py`: aplica o patch necessário quando `torchvision.transforms.functional_tensor` não está disponível.
-- `download_models.py`: baixa automaticamente os checkpoints oficiais do Real-ESRGAN para a pasta configurada.
+- `download_models.py`: baixa automaticamente os checkpoints oficiais do Real-ESRGAN (x2plus e x4plus) para a pasta configurada.
 
 Execute-os com `python tools/<script>.py` (respeitando o ambiente virtual).
 

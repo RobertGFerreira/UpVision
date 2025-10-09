@@ -14,22 +14,22 @@ if %errorlevel% neq 0 (
 
 echo Python encontrado.
 
-REM Criar venv se não existir
-if not exist venv310 (
-    echo Criando ambiente virtual venv310...
-    python -m venv venv310
-    if %errorlevel% neq 0 (
-        echo ERRO: Falha ao criar venv.
-        pause
-        exit /b 1
-    )
-) else (
-    echo Ambiente virtual venv310 já existe.
+# Criar venv se não existir
+if exist .venv310 (
+    echo Removendo ambiente virtual antigo...
+    rmdir /s /q .venv310
+)
+echo Criando ambiente virtual .venv310...
+python -m venv .venv310
+if %errorlevel% neq 0 (
+    echo ERRO: Falha ao criar venv.
+    pause
+    exit /b 1
 )
 
 REM Ativar venv
 echo Ativando ambiente virtual...
-call venv310\Scripts\activate.bat
+call .venv310\Scripts\activate.bat
 if %errorlevel% neq 0 (
     echo ERRO: Falha ao ativar venv.
     pause
@@ -45,7 +45,7 @@ if %errorlevel% neq 0 (
 
 REM Instalar PyTorch (CPU por padrão, ajuste para GPU se necessário)
 echo Instalando PyTorch (CPU)...
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 if %errorlevel% neq 0 (
     echo ERRO: Falha ao instalar PyTorch.
     pause
@@ -54,6 +54,11 @@ if %errorlevel% neq 0 (
 
 REM Instalar dependências
 echo Instalando dependências do projeto...
+if exist temp_basicsr (
+    pip install ./temp_basicsr
+) else (
+    pip install git+https://github.com/XPixelGroup/BasicSR.git
+)
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo ERRO: Falha ao instalar dependências.

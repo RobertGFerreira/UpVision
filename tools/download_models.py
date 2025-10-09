@@ -18,8 +18,8 @@ import requests
 
 # Lista de modelos suportados e suas respectivas URLs oficiais.
 MODEL_REGISTRY: Dict[str, str] = {
-    "RealESRGAN_x2plus.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.0/RealESRGAN_x2plus.pth",
-    "RealESRGAN_x4plus.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.0/RealESRGAN_x4plus.pth",
+    "RealESRGAN_x2plus.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
+    "RealESRGAN_x4plus.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth",
 }
 
 DEFAULT_MODELS: Iterable[str] = tuple(MODEL_REGISTRY.keys())
