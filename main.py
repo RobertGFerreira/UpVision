@@ -453,10 +453,160 @@ class UpscaleApp:
         )
 
     def _on_view_results(self) -> None:
-        if self.output_dir and self.output_dir.exists():
-            os.startfile(str(self.output_dir))
-        else:
+        if not self.output_dir or not self.output_dir.exists():
             messagebox.showwarning(APP_TITLE, "Nenhuma pasta de destino definida ou não existe.")
+            return
+        
+        # Coletar imagens processadas
+        processed_images = []
+        for file_path in self.output_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in ['.png', '.jpg', '.jpeg', '.tiff', '.webp']:
+                processed_images.append(file_path)
+        
+        if not processed_images:
+            messagebox.showinfo(APP_TITLE, "Nenhuma imagem processada encontrada na pasta de destino.")
+            return
+        
+        # Criar janela de visualização
+        self._show_comparison_window(processed_images)
+
+    def _show_comparison_window(self, processed_images: list[Path]) -> None:
+        """Mostra janela com imagens originais e processadas lado a lado."""
+        window = tk.Toplevel(self.root)
+        window.title("Comparação de Imagens - UpVision")
+        window.geometry("1200x800")
+        window.minsize(800, 600)
+        
+        # Frame principal com scrollbar
+        main_frame = ttk.Frame(window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Canvas e scrollbar para rolagem
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Bind mousewheel para rolagem
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Título
+        title_label = ttk.Label(scrollable_frame, text="Comparação: Original × Processada", 
+                               font=("Segoe UI", 14, "bold"))
+        title_label.pack(pady=(0, 20))
+        
+        # Para cada imagem processada, tentar encontrar a original
+        for processed_path in sorted(processed_images):
+            self._add_image_comparison(scrollable_frame, processed_path)
+        
+        # Botão fechar
+        close_button = ttk.Button(scrollable_frame, text="Fechar", command=window.destroy)
+        close_button.pack(pady=20)
+
+    def _add_image_comparison(self, parent: ttk.Frame, processed_path: Path) -> None:
+        """Adiciona uma comparação de imagem ao frame."""
+        # Tentar encontrar imagem original
+        original_path = self._find_original_image(processed_path)
+        
+        # Frame para esta comparação
+        comparison_frame = ttk.Frame(parent)
+        comparison_frame.pack(fill=tk.X, pady=10)
+        
+        # Nome do arquivo
+        filename = processed_path.name
+        name_label = ttk.Label(comparison_frame, text=filename, font=("Segoe UI", 10, "bold"))
+        name_label.pack(pady=(0, 10))
+        
+        # Frame para imagens lado a lado
+        images_frame = ttk.Frame(comparison_frame)
+        images_frame.pack(fill=tk.X)
+        
+        # Imagem original
+        original_frame = ttk.LabelFrame(images_frame, text="Original", padding=10)
+        original_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        if original_path and original_path.exists():
+            try:
+                original_img = Image.open(original_path)
+                # Redimensionar mantendo proporção
+                original_img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+                original_photo = ImageTk.PhotoImage(original_img)
+                
+                original_label = ttk.Label(original_frame, image=original_photo)
+                original_label.image = original_photo  # Manter referência
+                original_label.pack()
+                
+                # Info da imagem
+                orig_info = f"{original_img.size[0]}×{original_img.size[1]}"
+                ttk.Label(original_frame, text=orig_info, font=("Segoe UI", 8)).pack(pady=(5, 0))
+                
+            except Exception as e:
+                ttk.Label(original_frame, text=f"Erro ao carregar:\n{str(e)}", 
+                         font=("Segoe UI", 8)).pack()
+        else:
+            ttk.Label(original_frame, text="Original não encontrada", 
+                     font=("Segoe UI", 8)).pack()
+        
+        # Imagem processada
+        processed_frame = ttk.LabelFrame(images_frame, text="Processada", padding=10)
+        processed_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        try:
+            processed_img = Image.open(processed_path)
+            # Redimensionar mantendo proporção
+            processed_img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+            processed_photo = ImageTk.PhotoImage(processed_img)
+            
+            processed_label = ttk.Label(processed_frame, image=processed_photo)
+            processed_label.image = processed_photo  # Manter referência
+            processed_label.pack()
+            
+            # Info da imagem
+            proc_info = f"{processed_img.size[0]}×{processed_img.size[1]}"
+            ttk.Label(processed_frame, text=proc_info, font=("Segoe UI", 8)).pack(pady=(5, 0))
+            
+        except Exception as e:
+            ttk.Label(processed_frame, text=f"Erro ao carregar:\n{str(e)}", 
+                     font=("Segoe UI", 8)).pack()
+
+    def _find_original_image(self, processed_path: Path) -> Path | None:
+        """Tenta encontrar a imagem original correspondente à processada."""
+        # O padrão do Real-ESRGAN adiciona sufixo como _x2, _x4, etc.
+        stem = processed_path.stem
+        
+        # Possíveis padrões: nome_x2.jpg, nome_x4.jpg, etc.
+        # Remover sufixos comuns
+        for suffix in ['_x2', '_x4', '_x8']:
+            if stem.endswith(suffix):
+                original_stem = stem[:-len(suffix)]
+                original_path = processed_path.parent / f"{original_stem}{processed_path.suffix}"
+                if original_path.exists():
+                    return original_path
+                # Também tentar na pasta de entrada se conhecida
+                if hasattr(self, 'selected_files') and self.selected_files:
+                    for input_file in self.selected_files:
+                        if input_file.stem == original_stem and input_file.suffix == processed_path.suffix:
+                            return input_file
+        
+        # Se não encontrou, tentar procurar por nome similar na pasta de entrada
+        if hasattr(self, 'selected_files') and self.selected_files:
+            for input_file in self.selected_files:
+                if input_file.stem in stem and input_file.suffix == processed_path.suffix:
+                    return input_file
+        
+        return None
 
     # ------------------------------------------------------------------
     # Background worker & queue polling
