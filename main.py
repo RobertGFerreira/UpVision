@@ -588,7 +588,7 @@ class UpscaleApp:
         
         # Possíveis padrões: nome_x2.jpg, nome_x4.jpg, etc.
         # Remover sufixos comuns
-        for suffix in ['_x2', '_x4', '_x8']:
+        for suffix in ['_x2', '_x4', '_x8', '_sr']:
             if stem.endswith(suffix):
                 original_stem = stem[:-len(suffix)]
                 original_path = processed_path.parent / f"{original_stem}{processed_path.suffix}"
@@ -605,6 +605,25 @@ class UpscaleApp:
             for input_file in self.selected_files:
                 if input_file.stem in stem and input_file.suffix == processed_path.suffix:
                     return input_file
+        
+        # Último recurso: procurar na mesma pasta por arquivos com nome similar
+        for file_path in processed_path.parent.iterdir():
+            if (file_path != processed_path and 
+                file_path.is_file() and 
+                file_path.suffix.lower() == processed_path.suffix.lower()):
+                # Verificar se o nome do arquivo processado contém o nome do original
+                if file_path.stem in stem:
+                    return file_path
+                # Ou se são muito similares (removendo sufixos comuns)
+                orig_stem = file_path.stem
+                proc_stem = stem
+                # Remover sufixos comuns do processado
+                for sfx in ['_upscaled', '_enhanced', '_processed', '_result']:
+                    if proc_stem.endswith(sfx):
+                        proc_stem = proc_stem[:-len(sfx)]
+                        break
+                if orig_stem == proc_stem:
+                    return file_path
         
         return None
 
