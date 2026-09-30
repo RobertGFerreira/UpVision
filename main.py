@@ -15,6 +15,7 @@ python main.py
 
 import os
 import queue
+import sys
 import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -23,10 +24,15 @@ import tkinter as tk
 from PIL import Image, ImageTk
 
 from engine import BatchResult, UpscaleEngine
+from logging_config import get_logger, setup_logging
+from model_manager import ModelManagerDialog
+from preflight import check_dependencies, format_error_message, format_warning_message
 
 APP_TITLE = "UpVision"
 APP_SUBTITLE = "Real-ESRGAN Upscale"
 PADDING = 16
+
+logger = get_logger("upvision.main")
 
 
 class UpscaleApp:
@@ -56,12 +62,23 @@ class UpscaleApp:
         self.header_title_var = tk.StringVar(value=APP_TITLE)
         self.header_subtitle_var = tk.StringVar(value=APP_SUBTITLE)
 
+        # Controle cooperativo de jobs (stop_event)
+        self._stop_event = threading.Event()
+        self._worker_thread: threading.Thread | None = None
+
         self._build_ui()
         self._load_brand_assets()
         self._populate_models()
         self._populate_devices()
         self._update_status_line()
         self._start_queue_poller()
+
+        # Handler de encerramento limpo da janela
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_window)
+
+        # Verificar modelos disponíveis — exigir download se nenhum existir
+        self._ensure_models_available()
+
         self._maybe_schedule_first_run()
 
     # ------------------------------------------------------------------
@@ -139,7 +156,7 @@ class UpscaleApp:
         # Opções ---------------------------------------------------------
         options_frame = ttk.LabelFrame(main_frame, text="Opções")
         options_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 12))
-        for col in range(4):
+        for col in range(5):
             options_frame.columnconfigure(col, weight=1)
 
         ttk.Label(options_frame, text="Checkpoint:").grid(row=0, column=0, sticky="w", padx=8, pady=8)
@@ -152,6 +169,10 @@ class UpscaleApp:
         self.device_var = tk.StringVar()
         self.device_combo = ttk.Combobox(options_frame, textvariable=self.device_var, state="readonly")
         self.device_combo.grid(row=0, column=3, sticky="ew", padx=(0, 8), pady=8)
+
+        ttk.Button(
+            options_frame, text="Gerenciar modelos…", command=self._on_manage_models
+        ).grid(row=0, column=4, sticky="e", padx=8, pady=8)
 
         # Ações ----------------------------------------------------------
         actions_frame = ttk.Frame(main_frame)
@@ -251,8 +272,12 @@ class UpscaleApp:
         else:
             model_text = "Nenhum modelo selecionado"
 
+        cpu_warning = ""
+        if summary.torch_available and not summary.cuda_available:
+            cpu_warning = " | ⚠️ GPU não detectada — usando CPU (mais lento)"
+
         self.status_var.set(
-            f"Torch {summary.torch_version} | CUDA compilado: {summary.torch_cuda_compiled or '—'} | CUDA disponível: {cuda_text} | GPU: {gpu_name} | Modelo: {model_text}"
+            f"Torch {summary.torch_version} | CUDA compilado: {summary.torch_cuda_compiled or '—'} | CUDA disponível: {cuda_text} | GPU: {gpu_name} | Modelo: {model_text}{cpu_warning}"
         )
 
     def _append_log(self, message: str) -> None:
@@ -361,6 +386,65 @@ class UpscaleApp:
         else:
             self.btn_start.configure(state="normal")
 
+    def _ensure_models_available(self) -> None:
+        """Verifica se há modelos disponíveis; abre diálogo obrigatório se vazio."""
+        if self.models:
+            logger.info("%d modelo(s) encontrado(s).", len(self.models))
+            return
+
+        logger.warning("Nenhum modelo encontrado em %s.", self.engine.models_dir)
+        self._append_log(
+            f"Nenhum modelo encontrado em {self.engine.models_dir}. "
+            "Abrindo gerenciador de modelos…"
+        )
+
+        dialog = ModelManagerDialog(
+            self.root,
+            self.engine.models_dir,
+            on_close=self._refresh_models_after_dialog,
+            mandatory=True,
+        )
+        self.root.wait_window(dialog)
+
+        # Recarregar modelos após fechar o diálogo
+        self.models = self.engine.list_models()
+        self._populate_models()
+        self._update_status_line()
+
+        if not self.models:
+            self._append_log("Nenhum modelo baixado. O upscale não estará disponível.")
+            logger.error("Usuário fechou model manager sem baixar modelos.")
+
+    def _on_manage_models(self) -> None:
+        """Abre o diálogo de gerenciamento de modelos (acesso voluntário)."""
+        dialog = ModelManagerDialog(
+            self.root,
+            self.engine.models_dir,
+            on_close=self._refresh_models_after_dialog,
+            mandatory=False,
+        )
+        self.root.wait_window(dialog)
+
+    def _refresh_models_after_dialog(self) -> None:
+        """Callback chamado ao fechar o diálogo de modelos — refresca Combobox."""
+        self.models = self.engine.list_models()
+        self._populate_models()
+        self._update_status_line()
+        logger.info("Lista de modelos atualizada: %d modelo(s).", len(self.models))
+
+    def _on_close_window(self) -> None:
+        """Handler WM_DELETE_WINDOW — encerramento limpo com timeout."""
+        if self.processing and self._worker_thread and self._worker_thread.is_alive():
+            logger.info("Encerrando: sinalizando stop_event e aguardando thread…")
+            self._stop_event.set()
+            self._worker_thread.join(timeout=10)
+            if self._worker_thread.is_alive():
+                logger.warning(
+                    "Thread de processamento não encerrou em 10s. Forçando fechamento."
+                )
+        logger.info("Janela fechada pelo usuário.")
+        self.root.destroy()
+
     # ------------------------------------------------------------------
     # Event handlers
 
@@ -435,6 +519,9 @@ class UpscaleApp:
         self.current_total = len(self.selected_files)
         self._set_processing_state(True)
 
+        # Limpar stop_event antes de iniciar novo batch
+        self._stop_event.clear()
+
         thread = threading.Thread(
             target=self._worker,
             args=(
@@ -445,12 +532,18 @@ class UpscaleApp:
             ),
             daemon=True,
         )
+        self._worker_thread = thread
         thread.start()
 
     def _on_cancel(self) -> None:
-        messagebox.showinfo(
-            "Cancelar", "O cancelamento imediato não está disponível. Aguarde a conclusão da imagem atual."
-        )
+        """Cancelamento cooperativo — sinaliza stop_event para interromper entre imagens."""
+        if not self.processing:
+            return
+        self._stop_event.set()
+        self.progress_label.set("Cancelando…")
+        self.btn_stop.configure(state="disabled")
+        self._append_log("Cancelamento solicitado. Aguardando conclusão da imagem atual…")
+        logger.info("Cancelamento solicitado pelo usuário.")
 
     def _on_view_results(self) -> None:
         if not self.output_dir or not self.output_dir.exists():
@@ -632,7 +725,10 @@ class UpscaleApp:
 
     def _worker(self, images: list[Path], output_dir: Path, model_name: str, device: str) -> None:
         try:
-            self.engine.process_batch(images, output_dir, model_name, device, self.event_queue)
+            self.engine.process_batch(
+                images, output_dir, model_name, device,
+                self.event_queue, stop_event=self._stop_event,
+            )
         except Exception as exc:
             self.event_queue.put(("error", str(exc)))
             self.event_queue.put(("done", None))
@@ -652,6 +748,14 @@ class UpscaleApp:
                     self.progress_label.set(f"Processando: {filename} ({current} / {total})")
                 elif event == "done":
                     self._finalise_run(payload)
+                elif event == "cancelled":
+                    self._finalise_run(payload)
+                    if isinstance(payload, BatchResult) and not self._first_run_active:
+                        messagebox.showinfo(
+                            APP_TITLE,
+                            f"Processamento cancelado.\n"
+                            f"{payload.succeeded} de {payload.total} imagem(ns) concluída(s).",
+                        )
                 elif event == "error":
                     error_text = str(payload)
                     self._append_log(f"[ERRO] {error_text}")
@@ -776,9 +880,37 @@ class UpscaleApp:
 
 
 def main() -> None:
+    setup_logging()
+    logger.info("=== UpVision iniciando ===")
+
+    # --- Preflight check: verificar dependências antes de abrir GUI ---
+    preflight_result = check_dependencies()
+    if not preflight_result.can_run:
+        # Criar root temporário apenas para exibir messagebox
+        _err_root = tk.Tk()
+        _err_root.withdraw()
+        messagebox.showerror(
+            APP_TITLE,
+            format_error_message(preflight_result),
+        )
+        _err_root.destroy()
+        logger.error("Preflight falhou. Encerrando.")
+        sys.exit(1)
+
+    # Avisos não-bloqueantes (ex: CUDA ausente)
+    if preflight_result.warnings and preflight_result.can_run:
+        logger.warning(
+            "Preflight warnings: %s", "; ".join(preflight_result.warnings)
+        )
+
     root = tk.Tk()
     app = UpscaleApp(root)
+    logger.info(
+        "Interface carregada. Device preferido: %s",
+        app.device_summary.preferred_device(),
+    )
     app.run()
+    logger.info("=== UpVision encerrado ===")
 
 
 if __name__ == "__main__":

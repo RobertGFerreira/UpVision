@@ -14,6 +14,7 @@ invoked.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import queue
 import re
 import threading
@@ -24,6 +25,9 @@ from typing import Iterable, List, Optional
 
 import numpy as np
 from PIL import Image
+
+# Logger nomeado — configurado pelo logging_config do ponto de entrada
+logger = logging.getLogger("upvision.engine")
 
 warnings.filterwarnings(
     "ignore",
@@ -90,6 +94,7 @@ class UpscaleEngine:
         self._check_models_dir()
         self._model_cache: dict[str, ModelInfo] = {}
         self._lazy_model: Optional[_LazyModel] = None
+        logger.debug("UpscaleEngine inicializado. models_dir=%s", self.models_dir)
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -106,6 +111,7 @@ class UpscaleEngine:
 
     def get_device_summary(self) -> DeviceSummary:
         if torch is None:
+            logger.warning("PyTorch não está instalado.")
             return DeviceSummary(
                 torch_available=False,
                 torch_version=None,
@@ -120,15 +126,29 @@ class UpscaleEngine:
                 cuda_name = torch.cuda.get_device_name(0)
             except Exception:  # pragma: no cover - depends on driver state
                 cuda_name = "GPU não identificada"
+            logger.info("GPU detectada: %s | CUDA compilado: %s", cuda_name, getattr(torch.version, 'cuda', 'N/A'))
+            # Log de VRAM
+            try:
+                vram_free, vram_total = torch.cuda.mem_get_info(0)
+                logger.info(
+                    "VRAM: %.0f MB total | %.0f MB livre",
+                    vram_total / (1024 * 1024),
+                    vram_free / (1024 * 1024),
+                )
+            except Exception as vram_exc:
+                logger.debug("Não foi possível obter info de VRAM: %s", vram_exc)
         else:
             cuda_name = None
-        return DeviceSummary(
+            logger.info("CUDA não disponível. Torch %s usará CPU.", torch.__version__)
+        summary = DeviceSummary(
             torch_available=True,
             torch_version=torch.__version__,
             torch_cuda_compiled=getattr(torch.version, "cuda", None),
             cuda_available=cuda_available,
             cuda_device_name=cuda_name,
         )
+        logger.debug("DeviceSummary: %s", summary)
+        return summary
 
     # ------------------------------------------------------------------
     # Main entry point used by the GUI
@@ -140,12 +160,18 @@ class UpscaleEngine:
         model_name: str,
         device: str,
         event_queue: "queue.Queue[tuple[str, object]]",
+        stop_event: Optional[threading.Event] = None,
     ) -> BatchResult:
         start = time.time()
         paths = [Path(p) for p in image_paths]
         output_dir.mkdir(parents=True, exist_ok=True)
 
         model = self._resolve_model(model_name)
+        effective_device = _normalise_device(device)
+        logger.info(
+            "Iniciando batch: %d imagem(ns) | modelo=%s | device=%s",
+            len(paths), model_name, effective_device,
+        )
         lazy_model = self._ensure_lazy_model(model, device)
 
         succeeded = 0
@@ -153,21 +179,47 @@ class UpscaleEngine:
 
         total = len(paths)
         for index, source in enumerate(paths, start=1):
-            event_queue.put(("log", f"Processando: {source.name}"))
+            # Verificar cancelamento cooperativo antes de cada imagem
+            if stop_event and stop_event.is_set():
+                remaining = total - index + 1
+                cancel_msg = f"[CANCELADO] Processamento interrompido pelo usuário na imagem {index}/{total}"
+                event_queue.put(("log", cancel_msg))
+                logger.warning(cancel_msg)
+                duration = time.time() - start
+                result = BatchResult(total, succeeded, failed + remaining, duration)
+                logger.info(
+                    "Batch cancelado: %d/%d ok | %d não processada(s) | %.2fs",
+                    result.succeeded, result.total, remaining, result.duration,
+                )
+                event_queue.put(("cancelled", result))
+                return result
+
+            msg = f"Processando: {source.name}"
+            event_queue.put(("log", msg))
+            logger.debug("[%d/%d] %s", index, total, source.name)
             try:
                 dest = lazy_model.enhance_image(source, output_dir)
             except Exception as err:  # pragma: no cover - runtime errors only
                 failed += 1
-                event_queue.put(("log", f"[ERRO] {source.name}: {err}"))
+                err_msg = f"[ERRO] {source.name}: {err}"
+                event_queue.put(("log", err_msg))
+                logger.error(err_msg)
             else:
                 succeeded += 1
-                event_queue.put(("log", f"[OK] {source.name} → {dest.name}"))
+                ok_msg = f"[OK] {source.name} → {dest.name}"
+                event_queue.put(("log", ok_msg))
+                logger.info(ok_msg)
             finally:
                 event_queue.put(("progress", (index, total, source.name)))
 
         duration = time.time() - start
-        event_queue.put(("done", BatchResult(total, succeeded, failed, duration)))
-        return BatchResult(total, succeeded, failed, duration)
+        result = BatchResult(total, succeeded, failed, duration)
+        logger.info(
+            "Batch concluído: %d/%d ok | %d falha(s) | %.2fs",
+            result.succeeded, result.total, result.failed, result.duration,
+        )
+        event_queue.put(("done", result))
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -217,8 +269,13 @@ class _LazyModel:
             ) from _torch_import_error
         self.model_info = model_info
         self.device = _normalise_device(device)
+        logger.info(
+            "Carregando modelo '%s' (escala x%d) no device '%s'…",
+            model_info.name, model_info.scale, self.device,
+        )
         self._upsampler = self._build_upsampler()
         self._lock = threading.Lock()
+        logger.info("Modelo '%s' pronto.", model_info.name)
 
     def matches(self, model: ModelInfo, device: str) -> bool:
         return self.model_info.name == model.name and self.device == _normalise_device(device)
