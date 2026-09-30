@@ -12,12 +12,12 @@
 
   <!-- Badges de Tecnologias e Status -->
   <p>
-    <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python Version" />
+    <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python Version" />
     <img src="https://img.shields.io/badge/OpenCV-4.8+-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white" alt="OpenCV" />
     <img src="https://img.shields.io/badge/TensorFlow-Lite-FF6F00?style=for-the-badge&logo=tensorflow&logoColor=white" alt="TensorFlow" />
     <img src="https://img.shields.io/badge/Code_Style-PEP8-blueviolet?style=for-the-badge" alt="Code Style PEP8" />
     <img src="https://img.shields.io/badge/Status-Active_Development-2EA44F?style=for-the-badge" alt="Status" />
-    <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=license&logoColor=white" alt="MIT License" />
+    <img src="https://img.shields.io/badge/License-Proprietary-red?style=for-the-badge" alt="Proprietary License" />
   </p>
 </div>
 
@@ -78,32 +78,61 @@ A arquitetura do projeto foi desenhada visando **manutenibilidade** e **performa
 ## 🚀 Instalação e Uso
 
 ### Pré-requisitos
-*   Python 3.10 ou superior
-*   Webcam ou arquivo de vídeo para teste
-*   Git
+*   **Python 3.12** (versões 3.13+ não são suportadas pelo `realesrgan 0.3.0`)
+*   **Git**
+*   **Driver NVIDIA** (recomendado para aceleração GPU via CUDA)
 
-### Quick Start
+### Quick Start (Windows)
 
 ```bash
 # 1. Clone o repositório
 git clone https://github.com/RobertGFerreira/UpVision.git
 cd UpVision
 
-# 2. Crie e ative um ambiente virtual (Recomendado)
-python -m venv venv
-# Windows:
-.\venv\Scripts\activate
-# Linux/Mac:
-source venv/bin/activate
+# 2. Execute o script de setup automático
+#    - Cria venv com Python 3.12
+#    - Detecta GPU e instala PyTorch (CUDA 12.1 ou CPU)
+#    - Aplica patches necessários
+#    - Baixa modelos Real-ESRGAN
+run.bat
 
-# 3. Instale as dependências
-pip install -r requirements.txt
-
-# 4. Execute a aplicação (exemplo padrão)
-python main.py --source 0 --conf 0.5
+# 3. Ative o venv e execute
+.venv312\Scripts\activate
+python main.py
 ```
 
-> **Nota:** O parâmetro `--source 0` usa a webcam padrão. Para usar um arquivo de vídeo, passe o caminho: `--source videos/teste.mp4`.
+### Setup Manual
+
+```bash
+# Criar venv com Python 3.12
+py -3.12 -m venv .venv312
+.venv312\Scripts\activate
+
+# Instalar PyTorch com GPU (CUDA 12.1)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Instalar dependências
+pip install -r requirements.txt
+
+# Aplicar patch de compatibilidade
+python tools\patch_basicsr_torchvision.py
+
+# Baixar modelos
+python tools\download_models.py
+
+# Executar
+python main.py
+```
+
+> **Nota:** Na primeira execução sem modelos, o aplicativo abrirá automaticamente um diálogo para download dos checkpoints necessários.
+
+### 🎮 GPU (Aceleração CUDA)
+
+O UpVision detecta automaticamente GPUs NVIDIA com CUDA e as utiliza por padrão.
+
+*   **Verificar GPU:** Execute `python tools\env_check.py` para ver se CUDA está disponível.
+*   **Sem GPU:** O processamento funciona em CPU, porém significativamente mais lento.
+*   **Driver mínimo:** NVIDIA Driver 525.60+ para CUDA 12.1. Baixe em [nvidia.com/drivers](https://www.nvidia.com/download/index.aspx).
 
 ---
 
@@ -119,19 +148,23 @@ Este projeto segue rigorosos padrões de engenharia de software para garantir es
 
 ---
 
-## 🤝 Contribuição
+## 📚 Documentação e Governança
 
-Contribuições são bem-vindas! Siga o fluxo padrão de desenvolvimento Open Source:
+O projeto conta com um conjunto completo de especificações técnicas e diretrizes corporativas:
 
-1.  Faça um **Fork** do projeto.
-2.  Crie uma **Branch** para sua feature (`git checkout -b feat/nova-feature`).
-3.  Faça o **Commit** seguindo o padrão Conventional Commits (`git commit -m 'feat: adiciona suporte a GPU'`).
-4.  Faça o **Push** (`git push origin feat/nova-feature`).
-5.  Abra um **Pull Request**.
+* **[Arquitetura](ARCHITECTURE.md)** — Visão executiva da engenharia, threads e pipeline de inferência.
+* **[Manual de Agentes](AGENTS.md)** — Governança de atuação de IA, regras de complexidade e checklist.
+* **[Constituição Global](SYSTEM.md)** — Regras de engenharia, isolamento e formato obrigatório de resposta.
+* **[Guia de Manutenção Interna](CONTRIBUTING.md)** — Normas de commit convencional, testes e qualidade.
+* **[Planejamento Estratégico](ROADMAP.md)** — Fases de desenvolvimento, backlog e evolução tecnológica.
+* **[Segurança e Privacidade](SECURITY.md)** — Reporte interno de vulnerabilidades e proteção de dados.
+* **[Documentação Técnica Aprofundada](docs/)** — Manuais de arquitetura, catálogo de modelos e guias de execução.
 
-### Licença
+---
 
-Este projeto está licenciado sob a licença **MIT** - veja o arquivo [LICENSE](LICENSE) para mais detalhes.
+## 🔒 Licença e Confidencialidade
+
+Este software é um produto comercial **fechado, privado e proprietário** de **Robert Ferreira**. Todos os direitos reservados. Consulte [`LICENSE.md`](LICENSE.md) para termos contratuais e restrições de uso.
 
 ---
 
