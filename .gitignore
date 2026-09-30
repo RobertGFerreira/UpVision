@@ -1,49 +1,146 @@
-﻿# Ambientes virtuais
+# ==============================================================================
+# UPVISION - REGRAS DE EXCLUSÃO GIT (.gitignore)
+# Projeto Corporativo Privado e Proprietário - Visão Computacional e Upscaling
+# ==============================================================================
+
+# === DADOS SENSÍVEIS E ARQUIVOS DE AMBIENTE ===
+.env
+.env.*
+*.env
+!.env.example
+credentials.json
+secrets.json
+*.pem
+*.key
+*.token
+
+# === AMBIENTES VIRTUAIS PYTHON ===
 .venv/
+.venv*/
 venv/
 ENV/
 env/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Caches e arquivos compilados do Python
+# === CACHES E COMPILAÇÃO PYTHON ===
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 *.so
 *.dll
+.Python
 
-# Artefatos locais de primeira execução
-.first_run_complete
+# === LOGS E MONITORAMENTO ===
+logs/
+*.log
+*.err
+app.log
+upvision.log
 
-# Configurações de IDE/editor
-.vscode/
+# === ARQUIVOS DE IDEs E EDITORES ===
+.vscode/*
+!.vscode/settings.json
 .idea/
 *.code-workspace
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
 
-# Metadados de build e pacotes
+# === METADADOS DE BUILD E PACOTES ===
 *.egg-info/
 *.eggs/
 .dist/
 build/
 dist/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
 
-# Logs e arquivos temporários
-*.log
-*.tmp
-*.bak
-*.swp
+# === QUALIDADE DE CÓDIGO, TESTES E COVERAGE ===
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.lcov
+.coverage.*
 
-# Modelos grandes do Real-ESRGAN (mantém apenas os scripts .py)
+# === MODELOS PESADOS E CHECKPOINTS DE IA ===
+# Pesos do Real-ESRGAN e redes neurais (não versionar binários grandes)
 models_realesrgan/*.pth
+models_realesrgan/*.pt
+models_realesrgan/*.bin
+models_realesrgan/*.onnx
+models_realesrgan/*.safetensors
+models_realesrgan/*.part
+!models_realesrgan/*.py
+!models_realesrgan/.gitkeep
 
-# Saídas geradas pelo aplicativo (ajuste conforme seu fluxo)
+# Checkpoints e pesos gerais
+*.pth
+*.pt
+*.onnx
+*.safetensors
+*.engine
+*.weights
+*.part
+weights/
+checkpoints/
+
+# === SAÍDAS GERADAS E ARQUIVOS PROCESSADOS ===
+# Imagens processadas pelo motor de upscale
 assets/*_sr.*
 assets/*_x2.*
 assets/*_x3.*
 assets/*_x4.*
 assets/*_x8.*
+assets/*_upscaled.*
+assets/*_processed.*
+assets/*_comparison.*
+# Preservar imagens de teste e assets canônicos da interface
+!assets/upvision_logo.png
+!assets/teste_realesrgan.jpg
+!assets/demo.gif
 
-# Sistemas operacionais
-.DS_Store
+# Diretórios de saída e exportação
+output/
+outputs/
+runs/
+temp/
+tmp/
+
+# === ARTEFATOS LOCAIS E EXECUÇÃO ===
+.first_run_complete
+*.prof
+*.pstats
+crash_dump*
+
+# === SISTEMAS OPERACIONAIS ===
+# Windows
 Thumbs.db
+ehthumbs.db
 desktop.ini
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.directory
