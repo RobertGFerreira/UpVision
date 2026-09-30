@@ -10,9 +10,12 @@
 # Depois:
 #     pip install -r requirements.txt
 
+# Python 3.12 removeu distutils — basicsr depende dele via setuptools
+setuptools>=68
+
 realesrgan==0.3.0
 facexlib==0.3.0
 numpy>=1.26
 pillow>=10.0
 opencv-python-headless>=4.10
-requests>=2.32
+requests>=2.32
