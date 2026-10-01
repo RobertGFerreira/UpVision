@@ -85,8 +85,8 @@ if exist temp_basicsr (
     echo   Usando cópia local em temp_basicsr/...
     pip install ./temp_basicsr
 ) else (
-    echo   Instalando via git...
-    pip install git+https://github.com/XPixelGroup/BasicSR.git
+    echo   Instalando BasicSR...
+    pip install basicsr || pip install git+https://github.com/XPixelGroup/BasicSR.git
 )
 
 REM ------------------------------------------------------------------

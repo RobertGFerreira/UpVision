@@ -17,6 +17,12 @@ from typing import Dict, Iterable
 
 import requests
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 logger = logging.getLogger("upvision.download")
 
 # Lista de modelos suportados e suas respectivas URLs oficiais.
