@@ -77,14 +77,14 @@
 
 Antes de considerar a spec concluída:
 
-- [ ] `run.bat` executa do zero sem erros no Windows 11
-- [ ] `python main.py` sem modelos → abre diálogo de download obrigatório
-- [ ] `python main.py` com modelos → abre GUI com GPU selecionada por padrão
-- [ ] Preflight check bloqueia abertura se faltar dependência
-- [ ] Arquivo `logs/upvision.log` é criado e populado corretamente
-- [ ] Download dos dois modelos `.pth` funciona sem erro via diálogo
-- [ ] Botão "Gerenciar modelos…" abre diálogo e refresca Combobox
-- [ ] Botão "Cancelar" interrompe batch entre imagens (sem travar)
-- [ ] Fechar janela durante processamento encerra thread em até 10s
-- [ ] Auto-teste inicial processa `teste_realesrgan.jpg` com sucesso
-- [ ] Log exibe nome da GPU e VRAM no startup
+- [x] `run.bat` executa do zero sem erros no Windows 11
+- [x] `python main.py` sem modelos → abre diálogo de download obrigatório
+- [x] `python main.py` com modelos → abre GUI com GPU selecionada por padrão
+- [x] Preflight check bloqueia abertura se faltar dependência
+- [x] Arquivo `logs/upvision.log` é criado e populado corretamente
+- [x] Download dos dois modelos `.pth` funciona sem erro via diálogo
+- [x] Botão "Gerenciar modelos…" abre diálogo e refresca Combobox
+- [x] Botão "Cancelar" interrompe batch entre imagens (sem travar)
+- [x] Fechar janela durante processamento encerra thread em até 10s
+- [x] Auto-teste inicial processa `teste_realesrgan.jpg` com sucesso
+- [x] Log exibe nome da GPU e VRAM no startup
